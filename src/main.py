@@ -36,14 +36,11 @@ def main_loop() -> None:
             elif command == "/list":
                 handle_list(manager)
             elif command == "/complete":
-                # TODO: Implement in T030
-                print("Not yet implemented")
+                handle_complete(manager)
             elif command == "/update":
-                # TODO: Implement in T036
-                print("Not yet implemented")
+                handle_update(manager)
             elif command == "/delete":
-                # TODO: Implement in T046
-                print("Not yet implemented")
+                handle_delete(manager)
             elif command == "":
                 # Empty input - ignore
                 continue
@@ -109,6 +106,147 @@ def handle_list(manager: TaskManager) -> None:
         # Print formatted row
         print(f"{task.id:<2} | {status:<6} | {title_display:<24} | {description_display}")
 
+    print()
+
+
+def handle_delete(manager: TaskManager) -> None:
+    """Handle deleting a task with confirmation.
+
+    Args:
+        manager: The TaskManager instance to delete task from
+    """
+    # Prompt for task ID
+    task_id_input = input("Enter task ID: ")
+
+    # Validate and parse task ID
+    task_id, error = validate_task_id(task_id_input)
+    if error:
+        print(f"Error: {error}")
+        print()
+        return
+
+    # Check if task exists and display details
+    task = manager.get_by_id(task_id)
+    if task is None:
+        print(f"Error: Task #{task_id} not found")
+        print()
+        return
+
+    # Display task details before confirmation
+    print(f"Task #{task.id}: {task.title}")
+    if task.description:
+        print(f"Description: {task.description}")
+
+    # Confirm deletion
+    confirm_input = input("Confirm deletion (y/n): ").strip().lower()
+
+    # Check confirmation
+    if confirm_input != "y":
+        print("Deletion cancelled")
+        print()
+        return
+
+    # Delete task
+    manager.delete(task_id)
+
+    # Success message
+    print(f"✓ Task #{task_id} deleted successfully")
+    print()
+
+
+def handle_update(manager: TaskManager) -> None:
+    """Handle updating task title and/or description.
+
+    Args:
+        manager: The TaskManager instance to update task in
+    """
+    # Prompt for task ID
+    task_id_input = input("Enter task ID: ")
+
+    # Validate and parse task ID
+    task_id, error = validate_task_id(task_id_input)
+    if error:
+        print(f"Error: {error}")
+        print()
+        return
+
+    # Check if task exists
+    task = manager.get_by_id(task_id)
+    if task is None:
+        print(f"Error: Task #{task_id} not found")
+        print()
+        return
+
+    # Ask if user wants to update title
+    update_title_input = input("Update title? (y/n): ").strip().lower()
+    new_title = None
+    if update_title_input == "y":
+        title_input = input("Enter new title: ")
+        new_title = sanitize_input(title_input)
+
+        # Validate title
+        error = validate_title(new_title)
+        if error:
+            print(f"Error: {error}")
+            print()
+            return
+
+    # Ask if user wants to update description
+    update_description_input = input("Update description? (y/n): ").strip().lower()
+    new_description = None
+    if update_description_input == "y":
+        description_input = input("Enter new description: ")
+        new_description = sanitize_input(description_input)
+
+        # Validate description
+        error = validate_description(new_description)
+        if error:
+            print(f"Error: {error}")
+            print()
+            return
+
+    # Check if at least one field is selected
+    if new_title is None and new_description is None:
+        print("Error: No fields selected for update")
+        print()
+        return
+
+    # Update task
+    manager.update(task_id, title=new_title, description=new_description)
+
+    # Success confirmation
+    print(f"✓ Task #{task_id} updated successfully")
+    print()
+
+
+def handle_complete(manager: TaskManager) -> None:
+    """Handle toggling task completion status.
+
+    Args:
+        manager: The TaskManager instance to toggle task in
+    """
+    # Prompt for task ID
+    task_id_input = input("Enter task ID: ")
+
+    # Validate and parse task ID
+    task_id, error = validate_task_id(task_id_input)
+    if error:
+        print(f"Error: {error}")
+        print()
+        return
+
+    # Toggle completion status
+    task = manager.toggle_complete(task_id)
+
+    # Check if task exists
+    if task is None:
+        print(f"Error: Task #{task_id} not found")
+        print()
+        return
+
+    # Confirmation message
+    status = "complete" if task.completed else "incomplete"
+    print(f"✓ Task #{task.id} marked as {status}")
     print()
 
 
