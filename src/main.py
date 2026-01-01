@@ -29,7 +29,7 @@ def show_banner() -> None:
     ║             ╚═╝    ╚═════╝ ╚═════╝  ╚═════╝                 ║
     ║                                                              ║
     ║                    PHASE I - CONSOLE APP                    ║
-    ║              Spec-Driven Development Demo                   ║
+    ║                   Spec-Driven Development                    ║
     ║                                                              ║
     ╚══════════════════════════════════════════════════════════════╝
     """
