@@ -1,5 +1,3 @@
-# My First MCP Commit
+# Cloud-Native Todo Hackathon
 
-This repository was updated using Claude CLI and MCP.
-
-Demonstrating filesystem and GitHub MCP integration.
+Evolution of Todo - Phase I Complete
