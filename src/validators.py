@@ -1,12 +1,17 @@
 """Input validation functions for the todo application.
 
 This module provides validation for user inputs including title, description,
-and task ID validation.
+task ID, priority, and tags validation.
 """
+
+import re
 
 # Validation constants
 MAX_TITLE_LENGTH = 200
 MAX_DESCRIPTION_LENGTH = 1000
+MAX_TAGS = 10
+MAX_TAG_LENGTH = 20
+VALID_PRIORITIES = ["high", "medium", "low"]
 
 
 def sanitize_input(text: str) -> str:
@@ -84,3 +89,81 @@ def validate_task_id(task_id_str: str) -> tuple[int | None, str | None]:
         return task_id, None
     except ValueError:
         return None, "Task ID must be a valid integer"
+
+
+def validate_priority(priority: str) -> str | None:
+    """Validate a priority level.
+
+    Args:
+        priority: The priority to validate
+
+    Returns:
+        Error message if validation fails, None if valid
+
+    Validation rules:
+        - Must be High, Medium, or Low (case-insensitive)
+    """
+    if priority.lower() not in VALID_PRIORITIES:
+        return "Priority must be High, Medium, or Low"
+    return None
+
+
+def validate_tags(tags: list[str]) -> str | None:
+    """Validate a list of tags.
+
+    Args:
+        tags: List of tag strings to validate
+
+    Returns:
+        Error message if validation fails, None if valid
+
+    Validation rules:
+        - Maximum 10 tags
+        - Each tag 1-20 characters
+        - Alphanumeric plus hyphens and underscores only
+    """
+    if len(tags) > MAX_TAGS:
+        return f"Maximum {MAX_TAGS} tags per task"
+
+    for tag in tags:
+        if not tag:
+            return "Tags cannot be empty"
+        if len(tag) > MAX_TAG_LENGTH:
+            return f"Tag '{tag}' too long (max {MAX_TAG_LENGTH} characters)"
+        if not re.match(r'^[a-zA-Z0-9_-]+$', tag):
+            return f"Tag '{tag}' invalid: use only letters, numbers, -, _"
+
+    return None
+
+
+def parse_tags(tags_str: str) -> list[str]:
+    """Parse comma-separated tags string into list.
+
+    Args:
+        tags_str: Comma-separated tags (e.g., "bug,urgent,backend")
+
+    Returns:
+        List of cleaned, lowercase tag strings
+    """
+    if not tags_str.strip():
+        return []
+
+    tags = [tag.strip().lower() for tag in tags_str.split(',')]
+    # Remove empty strings
+    return [tag for tag in tags if tag]
+
+
+def normalize_priority(priority: str) -> str:
+    """Normalize priority to title case.
+
+    Args:
+        priority: Priority string (any case)
+
+    Returns:
+        Normalized priority: High, Medium, or Low
+        Defaults to Medium if invalid
+    """
+    priority_lower = priority.lower()
+    if priority_lower in VALID_PRIORITIES:
+        return priority_lower.capitalize()
+    return "Medium"

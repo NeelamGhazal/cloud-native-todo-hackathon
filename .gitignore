@@ -47,3 +47,9 @@ htmlcov/
 # Project specific
 *.db
 *.sqlite
+
+# Todo app data files
+.todo-data.json
+.todo-data.json.backup
+.todo-config.json
+.test-data.json

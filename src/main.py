@@ -10,7 +10,12 @@ from rich.text import Text
 from rich import box
 
 from src.operations import TaskManager
-from src.validators import sanitize_input, validate_title, validate_description, validate_task_id
+from src.validators import (
+    sanitize_input, validate_title, validate_description, validate_task_id,
+    validate_priority, validate_tags, parse_tags, normalize_priority
+)
+from src.filters import filter_by_status, filter_by_priority, filter_by_tag, search_tasks, sort_tasks
+from src.persistence import DataStore
 
 # Initialize rich console
 console = Console()
@@ -50,11 +55,16 @@ def main_loop() -> None:
 
     Handles command parsing and routing to appropriate handler functions.
     """
-    # Initialize the task manager
-    manager = TaskManager()
+    # Initialize the task manager with persistence
+    data_store = DataStore()
+    manager = TaskManager(data_store)
 
     # Show banner
     show_banner()
+
+    # Show loaded tasks message
+    if len(manager.tasks) > 0:
+        console.print(f"[dim cyan]📂 Loaded {len(manager.tasks)} task(s) from previous session[/dim cyan]\n")
 
     # Main loop
     while True:
@@ -73,6 +83,10 @@ def main_loop() -> None:
                 handle_add(manager)
             elif command == "/list":
                 handle_list(manager)
+            elif command == "/search":
+                handle_search(manager)
+            elif command == "/stats":
+                handle_stats(manager)
             elif command == "/complete":
                 handle_complete(manager)
             elif command == "/update":
@@ -111,10 +125,12 @@ def handle_help() -> None:
     table.add_column("Command", style="bold cyan", width=15)
     table.add_column("Description", style="white", width=45)
 
-    table.add_row("/add", "Add a new task")
+    table.add_row("/add", "Add a new task (with priority and tags)")
     table.add_row("/list", "View all tasks")
+    table.add_row("/search", "Search tasks by keyword")
+    table.add_row("/stats", "Show task statistics")
     table.add_row("/complete", "Toggle task completion status")
-    table.add_row("/update", "Update task title and/or description")
+    table.add_row("/update", "Update task details (title, desc, priority, tags)")
     table.add_row("/delete", "Delete a task")
     table.add_row("/help", "Show this help message")
     table.add_row("/exit", "Exit the application")
@@ -144,7 +160,7 @@ def handle_list(manager: TaskManager) -> None:
         console.print()
         return
 
-    # Create beautiful table
+    # Create beautiful table with priority and tags
     table = Table(
         title="📋 [bold cyan]Your Tasks[/bold cyan]",
         box=box.ROUNDED,
@@ -154,34 +170,47 @@ def handle_list(manager: TaskManager) -> None:
         expand=False
     )
 
-    table.add_column("ID", style="bold cyan", justify="center", width=5)
-    table.add_column("Status", justify="center", width=8)
-    table.add_column("Title", style="yellow", width=30)
-    table.add_column("Description", style="white", width=40)
+    table.add_column("ID", style="bold cyan", justify="center", width=4)
+    table.add_column("Status", justify="center", width=6)
+    table.add_column("Priority", justify="center", width=8)
+    table.add_column("Title", style="yellow", width=25)
+    table.add_column("Description", style="white", width=30)
+    table.add_column("Tags", style="magenta", width=15)
 
     # Print each task
     for task in tasks:
         # Status indicator with color
-        if task.completed:
-            status = "[bold green]✅[/bold green]"
-        else:
-            status = "[bold red]❌[/bold red]"
+        status = "[bold green]✅[/bold green]" if task.completed else "[bold red]❌[/bold red]"
 
-        # Truncate title and description to fit columns
-        title_display = task.title[:30]
-        if len(task.title) > 30:
-            title_display = task.title[:27] + "..."
+        # Priority with color and emoji
+        priority_colors = {"High": "red", "Medium": "yellow", "Low": "green"}
+        priority_emoji = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
+        p_color = priority_colors.get(task.priority, "white")
+        p_emoji = priority_emoji.get(task.priority, "⚪")
+        priority_display = f"[{p_color}]{p_emoji}[/{p_color}]"
 
-        description_display = task.description[:40] if task.description else ""
-        if len(task.description) > 40:
-            description_display = task.description[:37] + "..."
+        # Truncate title and description
+        title_display = task.title[:25]
+        if len(task.title) > 25:
+            title_display = task.title[:22] + "..."
+
+        description_display = task.description[:30] if task.description else ""
+        if len(task.description) > 30:
+            description_display = task.description[:27] + "..."
+
+        # Format tags
+        tags_display = ", ".join(task.tags[:2]) if task.tags else ""
+        if len(task.tags) > 2:
+            tags_display += f" +{len(task.tags) - 2}"
 
         # Add row to table
         table.add_row(
             str(task.id),
             status,
+            priority_display,
             title_display,
-            description_display
+            description_display,
+            tags_display
         )
 
     console.print(table)
@@ -292,18 +321,55 @@ def handle_update(manager: TaskManager) -> None:
             console.print(f"❌ [bold red]Error:[/bold red] {error}\n", style="red")
             return
 
+    # Ask if user wants to update priority
+    console.print("[cyan]Update priority? (y/n):[/cyan] ", end="")
+    update_priority_input = input().strip().lower()
+    new_priority = None
+    if update_priority_input == "y":
+        console.print("[cyan]Enter new priority (High/Medium/Low):[/cyan] ", end="")
+        priority_input = input().strip()
+        new_priority = normalize_priority(priority_input)
+
+        # Validate priority
+        error = validate_priority(new_priority)
+        if error:
+            console.print(f"❌ [bold red]Error:[/bold red] {error}\n", style="red")
+            return
+
+    # Ask if user wants to update tags
+    console.print("[cyan]Update tags? (y/n):[/cyan] ", end="")
+    update_tags_input = input().strip().lower()
+    new_tags = None
+    if update_tags_input == "y":
+        console.print("[cyan]Enter new tags (comma-separated):[/cyan] ", end="")
+        tags_input = input().strip()
+        new_tags = parse_tags(tags_input) if tags_input else []
+
+        # Validate tags
+        if new_tags:
+            error = validate_tags(new_tags)
+            if error:
+                console.print(f"❌ [bold red]Error:[/bold red] {error}\n", style="red")
+                return
+
     # Check if at least one field is selected
-    if new_title is None and new_description is None:
+    if new_title is None and new_description is None and new_priority is None and new_tags is None:
         console.print("❌ [bold red]Error:[/bold red] No fields selected for update\n", style="red")
         return
 
     # Update task
-    updated_task = manager.update(task_id, title=new_title, description=new_description)
+    updated_task = manager.update(task_id, title=new_title, description=new_description,
+                                  priority=new_priority, tags=new_tags)
 
     # Success confirmation with task details
+    priority_colors = {"High": "red", "Medium": "yellow", "Low": "green"}
+    priority_color = priority_colors.get(updated_task.priority, "white")
+
     task_info = f"[bold]Task #{updated_task.id}[/bold]\n"
     task_info += f"Title: {updated_task.title}\n"
-    task_info += f"Description: {updated_task.description}"
+    task_info += f"Description: {updated_task.description}\n"
+    task_info += f"Priority: [{priority_color}]{updated_task.priority}[/{priority_color}]\n"
+    task_info += f"Tags: {', '.join(updated_task.tags) if updated_task.tags else '(none)'}"
 
     console.print(
         Panel.fit(
@@ -345,8 +411,153 @@ def handle_complete(manager: TaskManager) -> None:
     console.print(f"✅ [bold green]Task #{task.id} marked as {status}[/bold green]\n")
 
 
+def handle_search(manager: TaskManager) -> None:
+    """Handle searching tasks by keyword.
+
+    Args:
+        manager: The TaskManager instance to search tasks in
+    """
+    # Prompt for keyword
+    console.print("[cyan]Enter search keyword:[/cyan] ", end="")
+    keyword_input = input()
+    keyword = sanitize_input(keyword_input)
+
+    # Validate keyword
+    if not keyword:
+        console.print("❌ [bold red]Error:[/bold red] Search keyword cannot be empty\\n", style="red")
+        return
+
+    # Search tasks
+    all_tasks = manager.get_all()
+    matching_tasks = search_tasks(all_tasks, keyword)
+
+    # Check if any matches found
+    if not matching_tasks:
+        console.print(
+            Panel.fit(
+                f"🔍 [yellow]No tasks found matching '[bold]{keyword}[/bold]'[/yellow]",
+                border_style="yellow",
+                padding=(1, 2)
+            )
+        )
+        console.print()
+        return
+
+    # Display results count
+    console.print(f"[dim cyan]Found {len(matching_tasks)} task(s) matching '{keyword}'[/dim cyan]\\n")
+
+    # Create results table
+    table = Table(
+        title=f"🔍 [bold cyan]Search Results: '{keyword}'[/bold cyan]",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold",
+        border_style="cyan",
+        expand=False
+    )
+
+    table.add_column("ID", style="bold cyan", justify="center", width=4)
+    table.add_column("Status", justify="center", width=6)
+    table.add_column("Priority", justify="center", width=8)
+    table.add_column("Title", style="yellow", width=25)
+    table.add_column("Description", style="white", width=30)
+    table.add_column("Tags", style="magenta", width=15)
+
+    # Print each matching task
+    for task in matching_tasks:
+        # Status indicator with color
+        status = "[bold green]✅[/bold green]" if task.completed else "[bold red]❌[/bold red]"
+
+        # Priority with color and emoji
+        priority_colors = {"High": "red", "Medium": "yellow", "Low": "green"}
+        priority_emoji = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
+        p_color = priority_colors.get(task.priority, "white")
+        p_emoji = priority_emoji.get(task.priority, "⚪")
+        priority_display = f"[{p_color}]{p_emoji}[/{p_color}]"
+
+        # Truncate title and description
+        title_display = task.title[:25]
+        if len(task.title) > 25:
+            title_display = task.title[:22] + "..."
+
+        description_display = task.description[:30] if task.description else ""
+        if len(task.description) > 30:
+            description_display = task.description[:27] + "..."
+
+        # Format tags
+        tags_display = ", ".join(task.tags[:2]) if task.tags else ""
+        if len(task.tags) > 2:
+            tags_display += f" +{len(task.tags) - 2}"
+
+        # Add row to table
+        table.add_row(
+            str(task.id),
+            status,
+            priority_display,
+            title_display,
+            description_display,
+            tags_display
+        )
+
+    console.print(table)
+    console.print()
+
+
+def handle_stats(manager: TaskManager) -> None:
+    """Handle displaying task statistics.
+
+    Args:
+        manager: The TaskManager instance to get statistics from
+    """
+    # Get statistics
+    stats = manager.get_statistics()
+
+    # Check if there are any tasks
+    if stats["total"] == 0:
+        console.print(
+            Panel.fit(
+                "📊 [yellow]No tasks yet. Add one with[/yellow] [bold cyan]/add[/bold cyan]",
+                border_style="yellow",
+                padding=(1, 2)
+            )
+        )
+        console.print()
+        return
+
+    # Create statistics display
+    stats_table = Table(
+        title="📊 [bold cyan]Task Statistics[/bold cyan]",
+        box=box.DOUBLE,
+        show_header=False,
+        border_style="cyan",
+        expand=False,
+        width=60
+    )
+
+    stats_table.add_column("Metric", style="bold white", width=25)
+    stats_table.add_column("Value", style="bold yellow", width=30)
+
+    # Overall stats
+    stats_table.add_row("Total Tasks", f"{stats['total']}")
+    stats_table.add_row("Completed", f"[green]{stats['completed']} ✅[/green]")
+    stats_table.add_row("Incomplete", f"[red]{stats['incomplete']} ❌[/red]")
+    stats_table.add_row("Completion Rate", f"[cyan]{stats['completion_rate']:.1f}%[/cyan]")
+
+    # Add separator
+    stats_table.add_row("", "")
+
+    # Priority breakdown
+    stats_table.add_row("[bold]By Priority:[/bold]", "")
+    stats_table.add_row("  🔴 High", f"{stats['by_priority']['High']}")
+    stats_table.add_row("  🟡 Medium", f"{stats['by_priority']['Medium']}")
+    stats_table.add_row("  🟢 Low", f"{stats['by_priority']['Low']}")
+
+    console.print(stats_table)
+    console.print()
+
+
 def handle_add(manager: TaskManager) -> None:
-    """Handle adding a new task with title and description prompts.
+    """Handle adding a new task with enhanced metadata.
 
     Args:
         manager: The TaskManager instance to add the task to
@@ -373,13 +584,35 @@ def handle_add(manager: TaskManager) -> None:
         console.print(f"❌ [bold red]Error:[/bold red] {error}\n", style="red")
         return
 
+    # Prompt for priority (optional)
+    console.print("[cyan]Enter priority (High/Medium/Low, default: Medium):[/cyan] ", end="")
+    priority_input = input().strip()
+    priority = normalize_priority(priority_input) if priority_input else "Medium"
+
+    # Prompt for tags (optional)
+    console.print("[cyan]Enter tags (comma-separated, optional):[/cyan] ", end="")
+    tags_input = input().strip()
+    tags = parse_tags(tags_input) if tags_input else []
+
+    # Validate tags
+    if tags:
+        error = validate_tags(tags)
+        if error:
+            console.print(f"❌ [bold red]Error:[/bold red] {error}\n", style="red")
+            return
+
     # Add task
-    task = manager.add(title, description)
+    task = manager.add(title, description, priority, tags)
 
     # Success confirmation with task details
+    priority_colors = {"High": "red", "Medium": "yellow", "Low": "green"}
+    priority_color = priority_colors.get(priority, "white")
+
     task_info = f"[bold]Task #{task.id}[/bold]\n"
     task_info += f"Title: {task.title}\n"
-    task_info += f"Description: {task.description if task.description else '(none)'}"
+    task_info += f"Description: {task.description if task.description else '(none)'}\n"
+    task_info += f"Priority: [{priority_color}]{task.priority}[/{priority_color}]\n"
+    task_info += f"Tags: {', '.join(task.tags) if task.tags else '(none)'}"
 
     console.print(
         Panel.fit(
